@@ -82,7 +82,7 @@ function App() {
     const itemIndex = record.items.length;
     setRecords((current) => current.map((currentRecord) => currentRecord.id === record.id
       ? { ...currentRecord, items: [...currentRecord.items, { name: '', amount: 0, category: 'その他' }] }
-      : current));
+      : currentRecord));
     setEditing({ recordId: record.id, itemIndex, isNew: true });
     setDraft({ date: record.date, store: record.store, name: '', amount: '', category: 'その他' });
   }
