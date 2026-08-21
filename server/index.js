@@ -9,7 +9,10 @@ const port = Number(process.env.PORT || 8787);
 const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_request, file, callback) => {
-    callback(null, /^image\/(jpeg|png|webp|gif)$/.test(file.mimetype));
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) {
+      return callback(new Error('JPG、PNG、WEBP、GIF形式の画像を選択してください。'));
+    }
+    callback(null, true);
   },
 });
 const anthropic = process.env.ANTHROPIC_API_KEY
@@ -64,8 +67,29 @@ app.post('/api/analyze-receipt', upload.single('receipt'), async (request, respo
     });
   } catch (error) {
     console.error('レシート解析エラー:', error);
-    return response.status(500).json({ error: 'レシートを読み取れませんでした。画像を確認して再試行してください。' });
+    if (error?.status === 400 && error.message.includes('credit balance')) {
+      return response.status(503).json({ error: 'Claude APIの利用残高が不足しています。Anthropic ConsoleのPlans & Billingで残高を追加してください。' });
+    }
+    if (error?.status === 401) {
+      return response.status(503).json({ error: 'Claude APIキーが無効です。.envのANTHROPIC_API_KEYを確認してください。' });
+    }
+    if (error?.status === 404) {
+      return response.status(503).json({ error: '指定したClaudeモデルが利用できません。.envのCLAUDE_MODELを確認してください。' });
+    }
+    return response.status(502).json({ error: 'Claude APIとの通信に失敗しました。しばらく待って再試行してください。' });
   }
+});
+
+// multerの画像形式・容量エラーを、画面で表示できるJSONに変換する。
+app.use((error, _request, response, next) => {
+  if (!error) return next();
+  if (error.code === 'LIMIT_FILE_SIZE') {
+    return response.status(413).json({ error: '画像サイズは10MB以下にしてください。' });
+  }
+  if (error.message?.includes('形式の画像')) {
+    return response.status(415).json({ error: error.message });
+  }
+  return response.status(500).json({ error: '画像の受付に失敗しました。' });
 });
 
 app.listen(port, () => console.log(`API server listening on http://localhost:${port}`));

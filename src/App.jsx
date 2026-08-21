@@ -37,11 +37,18 @@ function App() {
     const formData = new FormData(); formData.append('receipt', file);
     try {
       const response = await fetch('/api/analyze-receipt', { method: 'POST', body: formData });
-      const data = await response.json();
+      const responseText = await response.text();
+      let data;
+      try { data = JSON.parse(responseText); } catch { data = {}; }
       if (!response.ok) throw new Error(data.error || '解析に失敗しました。');
       setRecords((current) => [{ ...data, id: crypto.randomUUID() }, ...current]);
       setMessage(`${data.store}のレシートを登録しました。`);
-    } catch (error) { setMessage(error.message); } finally { setIsAnalyzing(false); }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'レシートの読み込みに失敗しました。');
+    } finally {
+      setIsAnalyzing(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
   }
 
   return <div className="app-shell">
