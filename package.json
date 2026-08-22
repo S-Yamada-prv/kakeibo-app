@@ -20,7 +20,8 @@
     "multer": "latest",
     "react": "latest",
     "react-chartjs-2": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",

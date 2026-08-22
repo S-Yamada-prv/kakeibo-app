@@ -3,6 +3,7 @@ import cors from 'cors';
 import express from 'express';
 import multer from 'multer';
 import Anthropic from '@anthropic-ai/sdk';
+import sharp from 'sharp';
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
@@ -18,6 +19,11 @@ const upload = multer({
 const anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
+const parseAmount = (value) => {
+  const normalized = String(value ?? '').replace(/[¥￥,\s]/g, '');
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : 0;
+};
 
 app.use(cors());
 app.use(express.json());
@@ -31,7 +37,16 @@ app.post('/api/analyze-receipt', upload.single('receipt'), async (request, respo
   }
 
   try {
-    // Claudeには画像とJSON形式の指示を渡し、画面側で扱いやすい構造に統一する。
+    // 回転・低解像度・薄い印字の影響を減らしてからClaudeへ送る。
+    const enhancedImage = await sharp(request.file.buffer)
+      .rotate()
+      .resize({ width: 2400, withoutEnlargement: false })
+      .normalize()
+      .sharpen()
+      .jpeg({ quality: 92, chromaSubsampling: '4:4:4' })
+      .toBuffer();
+
+    // Claudeには明細と合計を別構造で返すよう指示し、二重計上を防ぐ。
     const message = await anthropic.messages.create({
       model: process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
@@ -41,11 +56,11 @@ app.post('/api/analyze-receipt', upload.single('receipt'), async (request, respo
         content: [
           {
             type: 'image',
-            source: { type: 'base64', media_type: request.file.mimetype, data: request.file.buffer.toString('base64') },
+            source: { type: 'base64', media_type: 'image/jpeg', data: enhancedImage.toString('base64') },
           },
           {
             type: 'text',
-            text: `レシートから店舗名、購入日、商品名、金額、カテゴリを読み取ってください。カテゴリは「食費」「日用品」「外食」「交通費」「医療費」「その他」のいずれかに分類します。割引・値引き・クーポンは金額を必ず負数（例: -100）として商品行に含めてください。JSONのみで返してください。形式: {"store":"店舗名","date":"YYYY-MM-DD","items":[{"name":"商品名","amount":123,"category":"食費"}]}`,
+            text: `レシートを上から順に読み取り、明細行と合計情報を分けてください。商品・割引・値引き・クーポンはitemsに含め、割引は必ず負数（例: -100）にしてください。小計、税、合計はitemsに含めず totalsへ入れてください。文字や金額を判定できない行も省略せず、nameに読み取れた文字、amountに読み取れた数値（不明なら0）、lineTypeをunknown、confidenceを0としてitemsに残してください。カテゴリは「食費」「日用品」「外食」「交通費」「医療費」「その他」のいずれかです。confidenceは0から1で、判定に迷う場合は0.7未満にしてください。JSONのみで返してください。形式: {"store":"店舗名","date":"YYYY-MM-DD","items":[{"name":"商品名または不明","amount":-100,"category":"食費","lineType":"purchase|discount|unknown","confidence":0.95}],"totals":{"subtotal":1000,"tax":80,"total":1080}}`,
           },
         ],
       }],
@@ -62,9 +77,17 @@ app.post('/api/analyze-receipt', upload.single('receipt'), async (request, respo
       items: Array.isArray(receipt.items) ? receipt.items.map((item) => ({
         name: String(item.name || '名称不明'),
         // 割引は負数のまま保持し、合計金額から差し引けるようにする。
-        amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : 0,
+        amount: parseAmount(item.amount),
         category: String(item.category || 'その他'),
+        lineType: String(item.lineType || 'unknown'),
+        confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 0,
+        needsReview: item.lineType === 'unknown' || Number(item.confidence) < 0.7 || !item.name || !Number.isFinite(Number(item.amount)),
       })) : [],
+      totals: {
+        subtotal: parseAmount(receipt.totals?.subtotal),
+        tax: parseAmount(receipt.totals?.tax),
+        total: parseAmount(receipt.totals?.total),
+      },
     });
   } catch (error) {
     console.error('レシート解析エラー:', error);
