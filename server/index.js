@@ -45,7 +45,7 @@ app.post('/api/analyze-receipt', upload.single('receipt'), async (request, respo
           },
           {
             type: 'text',
-            text: `レシートから店舗名、購入日、商品名、金額、カテゴリを読み取ってください。カテゴリは「食費」「日用品」「外食」「交通費」「医療費」「その他」のいずれかに分類します。JSONのみで返してください。形式: {"store":"店舗名","date":"YYYY-MM-DD","items":[{"name":"商品名","amount":123,"category":"食費"}]}`,
+            text: `レシートから店舗名、購入日、商品名、金額、カテゴリを読み取ってください。カテゴリは「食費」「日用品」「外食」「交通費」「医療費」「その他」のいずれかに分類します。割引・値引き・クーポンは金額を必ず負数（例: -100）として商品行に含めてください。JSONのみで返してください。形式: {"store":"店舗名","date":"YYYY-MM-DD","items":[{"name":"商品名","amount":123,"category":"食費"}]}`,
           },
         ],
       }],
@@ -61,7 +61,8 @@ app.post('/api/analyze-receipt', upload.single('receipt'), async (request, respo
       date: /^\d{4}-\d{2}-\d{2}$/.test(receipt.date) ? receipt.date : new Date().toISOString().slice(0, 10),
       items: Array.isArray(receipt.items) ? receipt.items.map((item) => ({
         name: String(item.name || '名称不明'),
-        amount: Math.max(0, Number(item.amount) || 0),
+        // 割引は負数のまま保持し、合計金額から差し引けるようにする。
+        amount: Number.isFinite(Number(item.amount)) ? Number(item.amount) : 0,
         category: String(item.category || 'その他'),
       })) : [],
     });
